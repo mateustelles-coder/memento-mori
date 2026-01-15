@@ -1,0 +1,1477 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WOSC - Sistema OSCE de Treino e Avaliação</title>
+    <meta name="description" content="Sistema de treino e avaliação OSCE com correção binária, checklist prévio e acompanhamento longitudinal">
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulse-border {
+            0%, 100% { border-color: #ef4444; }
+            50% { border-color: #fbbf24; }
+        }
+        @keyframes countdown {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        .animate-fade-in { animation: fade-in 0.6s ease-out; }
+        .animate-pulse-border { animation: pulse-border 2s infinite; }
+        .animate-countdown { animation: countdown 1s infinite; }
+
+        .station-header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+            border-left: 4px solid #f59e0b;
+        }
+
+        .checklist-item {
+            transition: all 0.3s ease;
+        }
+        .checklist-item:hover {
+            transform: translateX(4px);
+        }
+
+        .timer-critical {
+            color: #ef4444;
+            animation: countdown 1s infinite;
+        }
+
+        .result-card {
+            backdrop-filter: blur(10px);
+        }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white !important; }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+        // ==========================================
+        // BANCO DE ESTAÇÕES CLÍNICAS
+        // ==========================================
+        const STATION_BANK = [
+            {
+                id: "EST001",
+                area: "Cardiologia",
+                etapa: "Internato",
+                tempo: 600,
+                caso: {
+                    descricao: "Homem, 58 anos, trazido pelo SAMU com queixa de dor torácica intensa há 40 minutos, de início súbito, em aperto, irradiando para o membro superior esquerdo. Refere sudorese e náuseas. Hipertenso em uso irregular de losartana.",
+                    sinais_vitais: {
+                        PA: "160/100 mmHg",
+                        FC: "102 bpm",
+                        FR: "22 irpm",
+                        SpO2: "94% ar ambiente",
+                        Tax: "36.5°C"
+                    },
+                    exame_fisico_disponivel: {
+                        geral: "Paciente ansioso, pálido, sudoréico",
+                        cardiovascular: "Ritmo regular, B3 presente, sem sopros",
+                        respiratorio: "Murmúrio vesicular presente bilateralmente, estertores crepitantes em bases",
+                        extremidades: "Pulsos periféricos simétricos, sem edema"
+                    },
+                    exames_disponiveis: {
+                        ecg: "Supradesnivelamento de ST de V1 a V4, espelho em DII, DIII e aVF",
+                        troponina: "Resultado em 15 minutos",
+                        rx_torax: "Não disponível de imediato"
+                    }
+                },
+                tarefas: [
+                    "Identifique a síndrome clínica principal",
+                    "Indique o ambiente adequado para atendimento",
+                    "Descreva a monitorização inicial necessária",
+                    "Indique a conduta imediata prioritária"
+                ],
+                checklist: [
+                    { id: 1, descricao: "Reconheceu IAM com supra de ST / SCA de alto risco", peso: 1.5, categoria: "diagnostico" },
+                    { id: 2, descricao: "Indicou sala de emergência / UTI coronariana", peso: 1.0, categoria: "ambiente" },
+                    { id: 3, descricao: "Solicitou monitor cardíaco contínuo", peso: 0.5, categoria: "monitorizacao" },
+                    { id: 4, descricao: "Solicitou oximetria de pulso contínua", peso: 0.5, categoria: "monitorizacao" },
+                    { id: 5, descricao: "Indicou AAS (exceto se contraindicação absoluta)", peso: 1.0, categoria: "conduta" },
+                    { id: 6, descricao: "Indicou terapia de reperfusão (angioplastia primária ou trombolítico)", peso: 1.5, categoria: "conduta" },
+                    { id: 7, descricao: "Evitou condutas precipitadas ou incorretas (ex: alta precoce, exames desnecessários)", peso: 0.5, categoria: "seguranca" }
+                ],
+                diagnostico_principal: "Infarto Agudo do Miocárdio com Supradesnivelamento de ST (IAMCSST) de parede anterior",
+                pontos_chave_debriefing: [
+                    "O tempo porta-balão ou porta-agulha é crítico no IAMCSST",
+                    "AAS deve ser administrado precocemente salvo contraindicações absolutas",
+                    "A presença de B3 e estertores sugere congestão - atenção ao uso de betabloqueador"
+                ]
+            },
+            {
+                id: "EST002",
+                area: "Pneumologia",
+                etapa: "Internato",
+                tempo: 600,
+                caso: {
+                    descricao: "Mulher, 72 anos, com história de DPOC Gold IV, oxigenoterapia domiciliar, trazida por familiares com piora da dispneia há 3 dias. Refere aumento da tosse com expectoração amarelada. Nega febre.",
+                    sinais_vitais: {
+                        PA: "140/85 mmHg",
+                        FC: "110 bpm",
+                        FR: "28 irpm",
+                        SpO2: "82% ar ambiente",
+                        Tax: "37.2°C"
+                    },
+                    exame_fisico_disponivel: {
+                        geral: "Taquipneica, uso de musculatura acessória, fala frases curtas",
+                        respiratorio: "Murmúrio vesicular diminuído globalmente, sibilos expiratórios difusos, tempo expiratório prolongado",
+                        cardiovascular: "Ritmo regular, bulhas hipofonéticas",
+                        extremidades: "Cianose de extremidades"
+                    },
+                    exames_disponiveis: {
+                        gasometria: "Disponível em 10 minutos",
+                        rx_torax: "Hiperinsuflação, retificação de cúpulas diafragmáticas",
+                        hemograma: "Disponível em 30 minutos"
+                    }
+                },
+                tarefas: [
+                    "Identifique a síndrome clínica",
+                    "Classifique a gravidade do quadro",
+                    "Indique a terapêutica inicial",
+                    "Defina critérios para suporte ventilatório"
+                ],
+                checklist: [
+                    { id: 1, descricao: "Identificou exacerbação aguda de DPOC", peso: 1.5, categoria: "diagnostico" },
+                    { id: 2, descricao: "Reconheceu gravidade (insuficiência respiratória)", peso: 1.0, categoria: "gravidade" },
+                    { id: 3, descricao: "Indicou oxigenoterapia controlada (alvo SpO2 88-92%)", peso: 1.0, categoria: "conduta" },
+                    { id: 4, descricao: "Indicou broncodilatador de curta ação (beta2 e/ou anticolinérgico)", peso: 1.0, categoria: "conduta" },
+                    { id: 5, descricao: "Indicou corticoide sistêmico", peso: 0.5, categoria: "conduta" },
+                    { id: 6, descricao: "Considerou VNI diante de sinais de fadiga/acidose", peso: 1.0, categoria: "suporte" },
+                    { id: 7, descricao: "Evitou oxigenoterapia em alto fluxo sem critério / condutas precipitadas", peso: 0.5, categoria: "seguranca" }
+                ],
+                diagnostico_principal: "Exacerbação aguda de DPOC com insuficiência respiratória",
+                pontos_chave_debriefing: [
+                    "Em DPOC, oxigenoterapia em excesso pode suprimir o drive respiratório",
+                    "VNI é primeira escolha antes de IOT em exacerbações com acidose respiratória",
+                    "Antibióticos são indicados se houver aumento de dispneia, volume e purulência do escarro"
+                ]
+            },
+            {
+                id: "EST003",
+                area: "Neurologia",
+                etapa: "Internato",
+                tempo: 600,
+                caso: {
+                    descricao: "Homem, 67 anos, hipertenso e diabético, trazido pela esposa com início súbito de dificuldade para falar e fraqueza no braço direito há 1 hora e 30 minutos. Estava bem pela manhã.",
+                    sinais_vitais: {
+                        PA: "190/110 mmHg",
+                        FC: "88 bpm",
+                        FR: "18 irpm",
+                        SpO2: "97% ar ambiente",
+                        Tax: "36.8°C",
+                        Glicemia: "180 mg/dL"
+                    },
+                    exame_fisico_disponivel: {
+                        geral: "Acordado, confuso, não segue comandos complexos",
+                        neurologico: "Afasia motora, paresia facial central à direita, hemiparesia direita grau 2/5, Babinski à direita",
+                        cardiovascular: "Ritmo regular, sem sopros",
+                        respiratorio: "Sem alterações"
+                    },
+                    exames_disponiveis: {
+                        tc_cranio: "Disponível em 15 minutos",
+                        ecg: "Ritmo sinusal",
+                        coagulograma: "Disponível em 20 minutos"
+                    }
+                },
+                tarefas: [
+                    "Identifique a síndrome clínica principal",
+                    "Calcule o tempo desde o início dos sintomas",
+                    "Defina a prioridade diagnóstica",
+                    "Indique a conduta terapêutica prioritária se confirmada a hipótese"
+                ],
+                checklist: [
+                    { id: 1, descricao: "Identificou AVC isquêmico / síndrome de AVC agudo", peso: 1.5, categoria: "diagnostico" },
+                    { id: 2, descricao: "Reconheceu janela terapêutica (dentro de 4,5h)", peso: 1.0, categoria: "tempo" },
+                    { id: 3, descricao: "Solicitou TC de crânio sem contraste com urgência", peso: 1.0, categoria: "exame" },
+                    { id: 4, descricao: "Indicou trombólise IV se TC excluir hemorragia e sem contraindicações", peso: 1.5, categoria: "conduta" },
+                    { id: 5, descricao: "Monitorizou PA adequadamente", peso: 0.5, categoria: "monitorizacao" },
+                    { id: 6, descricao: "Solicitou glicemia capilar", peso: 0.5, categoria: "exame" },
+                    { id: 7, descricao: "Evitou uso de anti-hipertensivos agressivos ou condutas contraindicadas", peso: 0.5, categoria: "seguranca" }
+                ],
+                diagnostico_principal: "Acidente Vascular Cerebral Isquêmico Agudo em território de ACM esquerda",
+                pontos_chave_debriefing: [
+                    "Tempo é cérebro: cada minuto perdido aumenta a área de infarto",
+                    "TC sem contraste é o exame de escolha para excluir hemorragia",
+                    "Não reduzir PA agressivamente antes da trombólise, exceto se > 185/110"
+                ]
+            },
+            {
+                id: "EST004",
+                area: "Emergência",
+                etapa: "Internato",
+                tempo: 600,
+                caso: {
+                    descricao: "Mulher, 45 anos, sem comorbidades conhecidas, trazida pelo SAMU após quadro de urticária generalizada, edema de lábios e língua, e dificuldade respiratória iniciados 15 minutos após ingerir camarão em restaurante. Refere 'garganta fechando'.",
+                    sinais_vitais: {
+                        PA: "80/50 mmHg",
+                        FC: "124 bpm",
+                        FR: "26 irpm",
+                        SpO2: "91% ar ambiente",
+                        Tax: "36.4°C"
+                    },
+                    exame_fisico_disponivel: {
+                        geral: "Ansiosa, dispneica, estridor laríngeo audível",
+                        pele: "Urticária disseminada, angioedema de face e lábios",
+                        respiratorio: "Sibilos expiratórios, estridor inspiratório",
+                        cardiovascular: "Taquicárdica, pulsos finos"
+                    },
+                    exames_disponiveis: {
+                        laboratoriais: "Não disponíveis de imediato"
+                    }
+                },
+                tarefas: [
+                    "Identifique a emergência clínica",
+                    "Indique o tratamento de primeira linha",
+                    "Defina a via e dose adequadas",
+                    "Indique medidas adjuvantes"
+                ],
+                checklist: [
+                    { id: 1, descricao: "Identificou anafilaxia / choque anafilático", peso: 1.5, categoria: "diagnostico" },
+                    { id: 2, descricao: "Indicou adrenalina como tratamento de primeira linha", peso: 1.5, categoria: "conduta" },
+                    { id: 3, descricao: "Especificou via IM (anterolateral da coxa)", peso: 0.5, categoria: "via" },
+                    { id: 4, descricao: "Indicou dose correta (0,3-0,5 mg ou 0,01 mg/kg)", peso: 0.5, categoria: "dose" },
+                    { id: 5, descricao: "Indicou ressuscitação volêmica (SF ou RL)", peso: 1.0, categoria: "suporte" },
+                    { id: 6, descricao: "Considerou via aérea avançada diante de estridor/obstrução", peso: 1.0, categoria: "via_aerea" },
+                    { id: 7, descricao: "Evitou atrasar adrenalina com anti-histamínicos ou corticoides", peso: 0.5, categoria: "seguranca" }
+                ],
+                diagnostico_principal: "Anafilaxia grau III com comprometimento de via aérea e choque distributivo",
+                pontos_chave_debriefing: [
+                    "Adrenalina IM é a droga de primeira linha - não deve ser atrasada",
+                    "Anti-histamínicos e corticoides são adjuvantes, não substituem adrenalina",
+                    "Preparar via aérea avançada precocemente em caso de angioedema de via aérea superior"
+                ]
+            },
+            {
+                id: "EST005",
+                area: "Gastroenterologia",
+                etapa: "Internato",
+                tempo: 600,
+                caso: {
+                    descricao: "Homem, 62 anos, etilista crônico (1L de cachaça/dia há 30 anos), trazido com hematêmese volumosa (2 episódios) e melena. História prévia de internação por ascite há 6 meses.",
+                    sinais_vitais: {
+                        PA: "90/60 mmHg",
+                        FC: "118 bpm",
+                        FR: "22 irpm",
+                        SpO2: "96% ar ambiente",
+                        Tax: "36.2°C"
+                    },
+                    exame_fisico_disponivel: {
+                        geral: "Pálido, sudoréico, sonolento mas responsivo",
+                        abdome: "Globoso, circulação colateral visível, ascite moderada, hepatomegalia",
+                        extremidades: "Eritema palmar, aranhas vasculares em tronco",
+                        cardiovascular: "Taquicárdico, pulsos finos"
+                    },
+                    exames_disponiveis: {
+                        hemograma: "Hb 7,2 g/dL, Plaquetas 68.000",
+                        coagulograma: "INR 1,8",
+                        tipagem: "Disponível em 10 minutos"
+                    }
+                },
+                tarefas: [
+                    "Identifique a causa mais provável do sangramento",
+                    "Indique as medidas iniciais de ressuscitação",
+                    "Defina a terapêutica farmacológica específica",
+                    "Indique o procedimento diagnóstico e terapêutico prioritário"
+                ],
+                checklist: [
+                    { id: 1, descricao: "Identificou hemorragia digestiva alta varicosa / sangramento por varizes esofágicas", peso: 1.5, categoria: "diagnostico" },
+                    { id: 2, descricao: "Indicou ressuscitação volêmica / hemotransfusão", peso: 1.0, categoria: "ressuscitacao" },
+                    { id: 3, descricao: "Indicou drogas vasoativas esplâncnicas (terlipressina ou octreotide)", peso: 1.0, categoria: "farmaco" },
+                    { id: 4, descricao: "Indicou inibidor de bomba de prótons IV", peso: 0.5, categoria: "farmaco" },
+                    { id: 5, descricao: "Indicou antibioticoprofilaxia (ceftriaxona ou norfloxacino)", peso: 0.5, categoria: "antibiotico" },
+                    { id: 6, descricao: "Indicou EDA terapêutica precoce (ligadura elástica)", peso: 1.5, categoria: "procedimento" },
+                    { id: 7, descricao: "Evitou transfusão agressiva (alvo Hb 7-8) / condutas precipitadas", peso: 0.5, categoria: "seguranca" }
+                ],
+                diagnostico_principal: "Hemorragia Digestiva Alta por ruptura de varizes esofágicas em paciente com cirrose hepática",
+                pontos_chave_debriefing: [
+                    "Meta transfusional restritiva (Hb 7-8) está associada a melhor sobrevida em cirróticos",
+                    "Antibioticoprofilaxia reduz mortalidade em HDA varicosa",
+                    "EDA deve ser realizada em até 12h após estabilização"
+                ]
+            }
+        ];
+
+        // ==========================================
+        // CONFIGURAÇÃO DO SISTEMA
+        // ==========================================
+        const WOSC_CONFIG = {
+            versao: "1.0",
+            checklist_total: 7.0,
+            global_total: 3.0,
+            nota_maxima: 10.0,
+            niveis_global: [
+                { rotulo: "ÓTIMO", nota: 3.0, cor: "bg-green-500" },
+                { rotulo: "BOM", nota: 2.2, cor: "bg-blue-500" },
+                { rotulo: "SATISFATÓRIO", nota: 1.5, cor: "bg-yellow-500" },
+                { rotulo: "RUIM", nota: 0.7, cor: "bg-orange-500" },
+                { rotulo: "SOFRÍVEL", nota: 0.0, cor: "bg-red-500" }
+            ]
+        };
+
+        // ==========================================
+        // COMPONENTE PRINCIPAL
+        // ==========================================
+        function WOSCApp() {
+            // Estados principais
+            const [currentView, setCurrentView] = useState('menu'); // menu, profile, station, evaluation, results, history
+            const [userProfile, setUserProfile] = useState(() => {
+                const saved = localStorage.getItem('wosc_user_profile');
+                return saved ? JSON.parse(saved) : null;
+            });
+            const [stationHistory, setStationHistory] = useState(() => {
+                const saved = localStorage.getItem('wosc_station_history');
+                return saved ? JSON.parse(saved) : [];
+            });
+
+            // Estados da estação
+            const [currentStation, setCurrentStation] = useState(null);
+            const [stationPhase, setStationPhase] = useState('intro'); // intro, execution, evaluation, debriefing
+            const [frozenChecklist, setFrozenChecklist] = useState(null);
+            const [candidateResponses, setCandidateResponses] = useState('');
+            const [examinerQuestions, setExaminerQuestions] = useState([]);
+            const [timeRemaining, setTimeRemaining] = useState(0);
+            const [timerActive, setTimerActive] = useState(false);
+            const [checklistResults, setChecklistResults] = useState([]);
+            const [globalEvaluation, setGlobalEvaluation] = useState(null);
+            const [evaluationNotes, setEvaluationNotes] = useState('');
+
+            const timerRef = useRef(null);
+
+            // Salvar perfil e histórico
+            useEffect(() => {
+                if (userProfile) {
+                    localStorage.setItem('wosc_user_profile', JSON.stringify(userProfile));
+                }
+            }, [userProfile]);
+
+            useEffect(() => {
+                localStorage.setItem('wosc_station_history', JSON.stringify(stationHistory));
+            }, [stationHistory]);
+
+            // Timer da estação
+            useEffect(() => {
+                if (timerActive && timeRemaining > 0) {
+                    timerRef.current = setTimeout(() => {
+                        setTimeRemaining(prev => prev - 1);
+                    }, 1000);
+                } else if (timeRemaining === 0 && timerActive) {
+                    setTimerActive(false);
+                    handleTimeUp();
+                }
+                return () => clearTimeout(timerRef.current);
+            }, [timerActive, timeRemaining]);
+
+            // Funções auxiliares
+            const formatTime = (seconds) => {
+                const mins = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            };
+
+            const handleTimeUp = () => {
+                alert('TEMPO ESGOTADO! A estação será finalizada automaticamente.');
+                proceedToEvaluation();
+            };
+
+            // Iniciar estação
+            const startStation = (station) => {
+                setCurrentStation(station);
+                // CONGELAR o checklist ANTES da execução
+                setFrozenChecklist([...station.checklist]);
+                setTimeRemaining(station.tempo);
+                setCandidateResponses('');
+                setExaminerQuestions([]);
+                setChecklistResults(station.checklist.map(item => ({ ...item, resultado: null })));
+                setGlobalEvaluation(null);
+                setStationPhase('intro');
+                setCurrentView('station');
+            };
+
+            // Iniciar execução
+            const beginExecution = () => {
+                setStationPhase('execution');
+                setTimerActive(true);
+            };
+
+            // Finalizar resposta do candidato
+            const handleFinalize = () => {
+                const confirmFinalize = window.confirm(
+                    'Você digitou "FINALIZAR". Deseja encerrar sua participação nesta estação?\n\nApós confirmar, não será possível alterar suas respostas.'
+                );
+                if (confirmFinalize) {
+                    setTimerActive(false);
+                    proceedToEvaluation();
+                }
+            };
+
+            // Ir para avaliação
+            const proceedToEvaluation = () => {
+                setStationPhase('evaluation');
+            };
+
+            // Processar pergunta ao examinador
+            const handleExaminerQuestion = (question) => {
+                // Simular resposta do examinador (apenas dados objetivos)
+                let response = "";
+                const q = question.toLowerCase();
+
+                if (currentStation) {
+                    const exames = currentStation.caso.exames_disponiveis;
+                    const exameFisico = currentStation.caso.exame_fisico_disponivel;
+
+                    // Respostas baseadas apenas em dados objetivos disponíveis
+                    if (q.includes('ecg') || q.includes('eletrocardiograma')) {
+                        response = exames.ecg || "ECG não disponível no momento.";
+                    } else if (q.includes('gasometria')) {
+                        response = exames.gasometria || "Gasometria não disponível no momento.";
+                    } else if (q.includes('rx') || q.includes('raio') || q.includes('radiografia')) {
+                        response = exames.rx_torax || "Radiografia não disponível no momento.";
+                    } else if (q.includes('tc') || q.includes('tomografia')) {
+                        response = exames.tc_cranio || "TC não disponível no momento.";
+                    } else if (q.includes('troponina') || q.includes('marcador')) {
+                        response = exames.troponina || "Resultado pendente.";
+                    } else if (q.includes('hemograma') || q.includes('hemoglobina')) {
+                        response = exames.hemograma || "Hemograma não disponível no momento.";
+                    } else if (q.includes('coagulograma') || q.includes('coagulação') || q.includes('inr')) {
+                        response = exames.coagulograma || "Coagulograma não disponível no momento.";
+                    } else if (q.includes('ausculta') || q.includes('pulmonar')) {
+                        response = exameFisico.respiratorio || "Ausculta não especificada.";
+                    } else if (q.includes('coração') || q.includes('cardíaco') || q.includes('bulhas')) {
+                        response = exameFisico.cardiovascular || "Exame cardíaco não especificado.";
+                    } else if (q.includes('neurológico') || q.includes('força') || q.includes('motor')) {
+                        response = exameFisico.neurologico || "Exame neurológico não especificado.";
+                    } else if (q.includes('abdome') || q.includes('abdominal')) {
+                        response = exameFisico.abdome || "Exame abdominal não especificado.";
+                    } else if (q.includes('pele') || q.includes('cutâneo')) {
+                        response = exameFisico.pele || "Exame cutâneo não especificado.";
+                    } else if (q.includes('geral')) {
+                        response = exameFisico.geral || "Estado geral não especificado.";
+                    } else {
+                        response = "Informação não disponível. Limite suas perguntas aos dados clínicos e exames disponíveis.";
+                    }
+                }
+
+                setExaminerQuestions(prev => [...prev, { pergunta: question, resposta: response }]);
+            };
+
+            // Aplicar avaliação do checklist
+            const handleChecklistEvaluation = (itemId, resultado) => {
+                setChecklistResults(prev => prev.map(item =>
+                    item.id === itemId ? { ...item, resultado } : item
+                ));
+            };
+
+            // Calcular nota do checklist
+            const calculateChecklistScore = () => {
+                return checklistResults.reduce((total, item) => {
+                    return total + (item.resultado === true ? item.peso : 0);
+                }, 0);
+            };
+
+            // Finalizar avaliação
+            const finalizeEvaluation = () => {
+                if (!globalEvaluation) {
+                    alert('Por favor, selecione a avaliação global antes de finalizar.');
+                    return;
+                }
+
+                const checklistScore = calculateChecklistScore();
+                const globalScore = globalEvaluation.nota;
+                const finalScore = checklistScore + globalScore;
+
+                // Identificar pontos fortes e fracos
+                const pontosFortes = checklistResults
+                    .filter(item => item.resultado === true)
+                    .map(item => item.descricao);
+                const pontosFracos = checklistResults
+                    .filter(item => item.resultado === false)
+                    .map(item => item.descricao);
+
+                // Criar registro
+                const registro = {
+                    id: `REG${Date.now()}`,
+                    id_estacao: currentStation.id,
+                    data: new Date().toISOString(),
+                    area: currentStation.area,
+                    etapa: currentStation.etapa,
+                    nota_checklist: checklistScore,
+                    nota_global: globalScore,
+                    nota_final: finalScore,
+                    itens_checklist: checklistResults.map(item => ({
+                        id: item.id,
+                        descricao: item.descricao,
+                        resultado: item.resultado
+                    })),
+                    avaliacao_global: globalEvaluation.rotulo,
+                    pontos_fortes: pontosFortes,
+                    pontos_fracos: pontosFracos,
+                    resposta_candidato: candidateResponses,
+                    notas_avaliador: evaluationNotes
+                };
+
+                // Adicionar ao histórico
+                setStationHistory(prev => [...prev, registro]);
+
+                // Atualizar estatísticas do usuário
+                if (userProfile) {
+                    const newHistory = [...stationHistory, registro];
+                    const totalEstacoes = newHistory.length;
+                    const mediaFinal = newHistory.reduce((sum, r) => sum + r.nota_final, 0) / totalEstacoes;
+                    const mediaChecklist = newHistory.reduce((sum, r) => sum + r.nota_checklist, 0) / totalEstacoes;
+                    const mediaGlobal = newHistory.reduce((sum, r) => sum + r.nota_global, 0) / totalEstacoes;
+
+                    // Calcular tendência
+                    let tendencia = "estavel";
+                    if (newHistory.length >= 3) {
+                        const ultimas3 = newHistory.slice(-3);
+                        const primeiras = newHistory.slice(0, Math.ceil(newHistory.length / 2));
+                        const mediaUltimas = ultimas3.reduce((s, r) => s + r.nota_final, 0) / 3;
+                        const mediaPrimeiras = primeiras.reduce((s, r) => s + r.nota_final, 0) / primeiras.length;
+
+                        if (mediaUltimas > mediaPrimeiras + 0.5) tendencia = "melhorando";
+                        else if (mediaUltimas < mediaPrimeiras - 0.5) tendencia = "piorando";
+                    }
+
+                    setUserProfile(prev => ({
+                        ...prev,
+                        estatisticas: {
+                            total_estacoes_realizadas: totalEstacoes,
+                            media_nota_final: mediaFinal.toFixed(2),
+                            media_nota_checklist: mediaChecklist.toFixed(2),
+                            media_nota_global: mediaGlobal.toFixed(2),
+                            tendencia
+                        }
+                    }));
+                }
+
+                setStationPhase('debriefing');
+            };
+
+            // Estatísticas por área
+            const getStatsByArea = () => {
+                const areas = {};
+                stationHistory.forEach(registro => {
+                    if (!areas[registro.area]) {
+                        areas[registro.area] = { total: 0, soma: 0, registros: [] };
+                    }
+                    areas[registro.area].total++;
+                    areas[registro.area].soma += registro.nota_final;
+                    areas[registro.area].registros.push(registro);
+                });
+
+                return Object.entries(areas).map(([area, data]) => ({
+                    area,
+                    media: (data.soma / data.total).toFixed(2),
+                    total: data.total,
+                    registros: data.registros
+                }));
+            };
+
+            // Erros recorrentes
+            const getRecurringErrors = () => {
+                const errors = {};
+                stationHistory.forEach(registro => {
+                    registro.pontos_fracos.forEach(erro => {
+                        errors[erro] = (errors[erro] || 0) + 1;
+                    });
+                });
+
+                return Object.entries(errors)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([erro, count]) => ({ erro, count }));
+            };
+
+            // ==========================================
+            // RENDERIZAÇÃO DE COMPONENTES
+            // ==========================================
+
+            // Menu Principal
+            const renderMenu = () => (
+                <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 p-6">
+                    <div className="max-w-4xl mx-auto">
+                        <div className="text-center mb-12 animate-fade-in">
+                            <h1 className="text-5xl font-bold text-white mb-2">
+                                WOSC
+                            </h1>
+                            <p className="text-xl text-blue-300">
+                                Sistema OSCE de Treino e Avaliação
+                            </p>
+                            <p className="text-sm text-gray-400 mt-2">
+                                v{WOSC_CONFIG.versao} | Correção Binária | Checklist Congelado
+                            </p>
+                        </div>
+
+                        {!userProfile ? (
+                            <div className="bg-gray-800 rounded-xl p-8 shadow-2xl border border-blue-500/30">
+                                <h2 className="text-2xl font-semibold text-white mb-6">Cadastro de Usuário</h2>
+                                <ProfileForm onSubmit={setUserProfile} />
+                            </div>
+                        ) : (
+                            <>
+                                <div className="bg-gray-800 rounded-xl p-6 mb-6 shadow-xl border border-blue-500/30">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <h2 className="text-xl font-semibold text-white">{userProfile.nome}</h2>
+                                            <p className="text-gray-400">{userProfile.etapa_academica}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-2xl font-bold text-blue-400">
+                                                {userProfile.estatisticas?.media_nota_final || "—"}
+                                            </p>
+                                            <p className="text-sm text-gray-400">Média Geral</p>
+                                            {userProfile.estatisticas?.tendencia && (
+                                                <span className={`text-xs px-2 py-1 rounded ${
+                                                    userProfile.estatisticas.tendencia === 'melhorando' ? 'bg-green-500/20 text-green-400' :
+                                                    userProfile.estatisticas.tendencia === 'piorando' ? 'bg-red-500/20 text-red-400' :
+                                                    'bg-gray-500/20 text-gray-400'
+                                                }`}>
+                                                    {userProfile.estatisticas.tendencia.charAt(0).toUpperCase() + userProfile.estatisticas.tendencia.slice(1)}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                                    <button
+                                        onClick={() => setCurrentView('stationSelect')}
+                                        className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white p-6 rounded-xl shadow-lg transition-all transform hover:scale-105"
+                                    >
+                                        <div className="text-3xl mb-2">🏥</div>
+                                        <h3 className="text-xl font-semibold">Iniciar Estação</h3>
+                                        <p className="text-blue-200 text-sm mt-2">Começar uma nova estação OSCE</p>
+                                    </button>
+
+                                    <button
+                                        onClick={() => setCurrentView('history')}
+                                        className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white p-6 rounded-xl shadow-lg transition-all transform hover:scale-105"
+                                    >
+                                        <div className="text-3xl mb-2">📊</div>
+                                        <h3 className="text-xl font-semibold">Histórico</h3>
+                                        <p className="text-purple-200 text-sm mt-2">Ver desempenho e análises</p>
+                                    </button>
+                                </div>
+
+                                <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+                                    <h3 className="text-lg font-semibold text-white mb-4">Filosofia do OSCE</h3>
+                                    <blockquote className="text-gray-300 italic border-l-4 border-blue-500 pl-4">
+                                        "As tarefas orientam o candidato. O checklist avalia o médico. O sistema não ajuda. A evolução é baseada em dados."
+                                    </blockquote>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+
+            // Formulário de Perfil
+            const ProfileForm = ({ onSubmit }) => {
+                const [form, setForm] = useState({
+                    nome: '',
+                    etapa_academica: 'Internato',
+                    data_inicio: new Date().toISOString().split('T')[0]
+                });
+
+                const handleSubmit = (e) => {
+                    e.preventDefault();
+                    onSubmit({
+                        id_usuario: `USR${Date.now()}`,
+                        ...form,
+                        estatisticas: {
+                            total_estacoes_realizadas: 0,
+                            media_nota_final: 0,
+                            media_nota_checklist: 0,
+                            media_nota_global: 0,
+                            tendencia: 'estavel'
+                        }
+                    });
+                };
+
+                return (
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div>
+                            <label className="block text-gray-300 mb-2">Nome Completo</label>
+                            <input
+                                type="text"
+                                value={form.nome}
+                                onChange={e => setForm({...form, nome: e.target.value})}
+                                className="w-full bg-gray-700 text-white rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-gray-300 mb-2">Etapa Acadêmica</label>
+                            <select
+                                value={form.etapa_academica}
+                                onChange={e => setForm({...form, etapa_academica: e.target.value})}
+                                className="w-full bg-gray-700 text-white rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
+                            >
+                                <option value="1º ano">1º ano</option>
+                                <option value="2º ano">2º ano</option>
+                                <option value="3º ano">3º ano</option>
+                                <option value="4º ano">4º ano</option>
+                                <option value="5º ano">5º ano</option>
+                                <option value="6º ano">6º ano</option>
+                                <option value="Internato">Internato</option>
+                                <option value="Residência">Residência</option>
+                            </select>
+                        </div>
+                        <button
+                            type="submit"
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors"
+                        >
+                            Criar Perfil
+                        </button>
+                    </form>
+                );
+            };
+
+            // Seleção de Estação
+            const renderStationSelect = () => (
+                <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 p-6">
+                    <div className="max-w-4xl mx-auto">
+                        <button
+                            onClick={() => setCurrentView('menu')}
+                            className="text-blue-400 hover:text-blue-300 mb-6 flex items-center gap-2"
+                        >
+                            ← Voltar ao Menu
+                        </button>
+
+                        <h2 className="text-3xl font-bold text-white mb-6">Selecione uma Estação</h2>
+
+                        <div className="space-y-4">
+                            {STATION_BANK.map(station => {
+                                const completed = stationHistory.some(h => h.id_estacao === station.id);
+                                const lastScore = stationHistory.filter(h => h.id_estacao === station.id).pop()?.nota_final;
+
+                                return (
+                                    <div
+                                        key={station.id}
+                                        className={`bg-gray-800 rounded-xl p-6 border ${completed ? 'border-green-500/30' : 'border-gray-700'} hover:border-blue-500/50 transition-all cursor-pointer`}
+                                        onClick={() => startStation(station)}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <div className="flex items-center gap-3">
+                                                    <span className="bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full text-sm">
+                                                        {station.area}
+                                                    </span>
+                                                    <span className="text-gray-400 text-sm">
+                                                        {station.etapa}
+                                                    </span>
+                                                    {completed && (
+                                                        <span className="bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs">
+                                                            Realizada
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <h3 className="text-xl font-semibold text-white mt-2">
+                                                    Estação {station.id}
+                                                </h3>
+                                                <p className="text-gray-400 text-sm mt-1">
+                                                    Tempo: {Math.floor(station.tempo / 60)} minutos | {station.tarefas.length} tarefas
+                                                </p>
+                                            </div>
+                                            {lastScore !== undefined && (
+                                                <div className="text-right">
+                                                    <p className="text-2xl font-bold text-green-400">{lastScore.toFixed(1)}</p>
+                                                    <p className="text-xs text-gray-400">Última nota</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            );
+
+            // Execução da Estação
+            const renderStation = () => {
+                if (!currentStation) return null;
+
+                const sv = currentStation.caso.sinais_vitais;
+
+                return (
+                    <div className="min-h-screen bg-gray-900">
+                        {/* Cabeçalho da Estação */}
+                        <div className="station-header p-4 sticky top-0 z-50 shadow-lg">
+                            <div className="max-w-6xl mx-auto flex items-center justify-between">
+                                <div>
+                                    <h1 className="text-xl font-bold text-white">
+                                        ESTAÇÃO {currentStation.id} | {currentStation.area.toUpperCase()}
+                                    </h1>
+                                    <p className="text-blue-200 text-sm">ETAPA: {currentStation.etapa}</p>
+                                </div>
+                                <div className={`text-3xl font-mono font-bold ${timeRemaining < 60 ? 'timer-critical' : 'text-white'}`}>
+                                    {formatTime(timeRemaining)}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="max-w-6xl mx-auto p-6">
+                            {/* FASE: Introdução */}
+                            {stationPhase === 'intro' && (
+                                <div className="animate-fade-in">
+                                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 mb-6">
+                                        <h2 className="text-xl font-bold text-yellow-400 mb-4">INSTRUÇÕES IMPORTANTES</h2>
+                                        <ul className="text-yellow-200 space-y-2 text-sm">
+                                            <li>• O checklist de avaliação foi gerado e <strong>CONGELADO</strong> antes do início da estação</li>
+                                            <li>• O examinador responderá APENAS perguntas sobre dados objetivos</li>
+                                            <li>• Não serão fornecidas interpretações ou sugestões diagnósticas</li>
+                                            <li>• Para finalizar, digite <strong>FINALIZAR</strong> no campo de resposta</li>
+                                            <li>• A avaliação é binária: CERTO ou ERRADO, sem pontuação parcial</li>
+                                        </ul>
+                                    </div>
+
+                                    <button
+                                        onClick={beginExecution}
+                                        className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl text-xl transition-colors"
+                                    >
+                                        INICIAR ESTAÇÃO ({Math.floor(currentStation.tempo / 60)} minutos)
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* FASE: Execução */}
+                            {stationPhase === 'execution' && (
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
+                                    {/* Coluna Principal - Caso e Tarefas */}
+                                    <div className="lg:col-span-2 space-y-6">
+                                        {/* Caso Clínico */}
+                                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                                            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                                                <span className="text-2xl">📋</span> CASO CLÍNICO
+                                            </h2>
+                                            <p className="text-gray-300 leading-relaxed mb-4">
+                                                {currentStation.caso.descricao}
+                                            </p>
+
+                                            {/* Sinais Vitais */}
+                                            <div className="bg-gray-900 rounded-lg p-4">
+                                                <h3 className="text-sm font-semibold text-gray-400 mb-3">SINAIS VITAIS</h3>
+                                                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                                    {Object.entries(sv).map(([key, value]) => (
+                                                        <div key={key} className="bg-gray-800 rounded p-2 text-center">
+                                                            <p className="text-xs text-gray-500">{key}</p>
+                                                            <p className="text-lg font-semibold text-blue-400">{value}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Tarefas */}
+                                        <div className="bg-gray-800 rounded-xl p-6 border border-blue-500/30">
+                                            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                                                <span className="text-2xl">📝</span> TAREFAS
+                                            </h2>
+                                            <ol className="space-y-3">
+                                                {currentStation.tarefas.map((tarefa, idx) => (
+                                                    <li key={idx} className="flex items-start gap-3">
+                                                        <span className="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
+                                                            {idx + 1}
+                                                        </span>
+                                                        <span className="text-gray-300">{tarefa}</span>
+                                                    </li>
+                                                ))}
+                                            </ol>
+                                        </div>
+
+                                        {/* Área de Resposta */}
+                                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                                            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                                                <span className="text-2xl">✍️</span> SUA RESPOSTA
+                                            </h2>
+                                            <textarea
+                                                value={candidateResponses}
+                                                onChange={(e) => {
+                                                    setCandidateResponses(e.target.value);
+                                                    if (e.target.value.toUpperCase().includes('FINALIZAR')) {
+                                                        handleFinalize();
+                                                    }
+                                                }}
+                                                placeholder="Digite sua resposta aqui. Para encerrar a estação, digite FINALIZAR."
+                                                className="w-full h-64 bg-gray-900 text-gray-100 rounded-lg p-4 border border-gray-600 focus:border-blue-500 outline-none resize-none"
+                                            />
+                                            <p className="text-gray-500 text-sm mt-2">
+                                                Digite <span className="text-red-400 font-bold">FINALIZAR</span> quando terminar
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Coluna Lateral - Interação com Examinador */}
+                                    <div className="space-y-6">
+                                        <ExaminerInteraction
+                                            questions={examinerQuestions}
+                                            onQuestion={handleExaminerQuestion}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* FASE: Avaliação */}
+                            {stationPhase === 'evaluation' && (
+                                <EvaluationPhase
+                                    station={currentStation}
+                                    frozenChecklist={frozenChecklist}
+                                    checklistResults={checklistResults}
+                                    onChecklistChange={handleChecklistEvaluation}
+                                    globalEvaluation={globalEvaluation}
+                                    onGlobalChange={setGlobalEvaluation}
+                                    evaluationNotes={evaluationNotes}
+                                    onNotesChange={setEvaluationNotes}
+                                    onFinalize={finalizeEvaluation}
+                                    candidateResponses={candidateResponses}
+                                />
+                            )}
+
+                            {/* FASE: Debriefing */}
+                            {stationPhase === 'debriefing' && (
+                                <DebriefingPhase
+                                    station={currentStation}
+                                    checklistResults={checklistResults}
+                                    globalEvaluation={globalEvaluation}
+                                    onClose={() => {
+                                        setCurrentStation(null);
+                                        setCurrentView('menu');
+                                    }}
+                                />
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            // Componente de Interação com Examinador
+            const ExaminerInteraction = ({ questions, onQuestion }) => {
+                const [input, setInput] = useState('');
+
+                const handleSubmit = (e) => {
+                    e.preventDefault();
+                    if (input.trim()) {
+                        onQuestion(input.trim());
+                        setInput('');
+                    }
+                };
+
+                return (
+                    <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 sticky top-24">
+                        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                            <span className="text-xl">🩺</span> EXAMINADOR
+                        </h3>
+
+                        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 text-xs text-red-300">
+                            <strong>REGRAS:</strong> Apenas dados objetivos. Sem interpretações ou sugestões diagnósticas.
+                        </div>
+
+                        <div className="h-64 overflow-y-auto mb-4 space-y-3">
+                            {questions.length === 0 ? (
+                                <p className="text-gray-500 text-sm text-center py-8">
+                                    Faça perguntas sobre exames ou achados clínicos
+                                </p>
+                            ) : (
+                                questions.map((q, idx) => (
+                                    <div key={idx} className="space-y-2">
+                                        <div className="bg-blue-500/20 rounded-lg p-3 ml-4">
+                                            <p className="text-blue-300 text-sm">{q.pergunta}</p>
+                                        </div>
+                                        <div className="bg-gray-700 rounded-lg p-3 mr-4">
+                                            <p className="text-gray-300 text-sm">{q.resposta}</p>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        <form onSubmit={handleSubmit} className="flex gap-2">
+                            <input
+                                type="text"
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                placeholder="Pergunte ao examinador..."
+                                className="flex-1 bg-gray-900 text-white rounded-lg px-4 py-2 text-sm outline-none border border-gray-600 focus:border-blue-500"
+                            />
+                            <button
+                                type="submit"
+                                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+                            >
+                                Enviar
+                            </button>
+                        </form>
+                    </div>
+                );
+            };
+
+            // Fase de Avaliação
+            const EvaluationPhase = ({
+                station,
+                frozenChecklist,
+                checklistResults,
+                onChecklistChange,
+                globalEvaluation,
+                onGlobalChange,
+                evaluationNotes,
+                onNotesChange,
+                onFinalize,
+                candidateResponses
+            }) => {
+                const checklistScore = checklistResults.reduce((t, i) => t + (i.resultado === true ? i.peso : 0), 0);
+                const allEvaluated = checklistResults.every(i => i.resultado !== null);
+
+                return (
+                    <div className="animate-fade-in space-y-6">
+                        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6">
+                            <h2 className="text-2xl font-bold text-yellow-400 mb-2">FASE DE AVALIAÇÃO</h2>
+                            <p className="text-yellow-200">
+                                O checklist foi congelado ANTES da estação. Avalie cada item como CERTO ou ERRADO (sem pontuação parcial).
+                            </p>
+                        </div>
+
+                        {/* Resposta do Candidato */}
+                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                            <h3 className="text-lg font-bold text-white mb-4">Resposta do Candidato</h3>
+                            <div className="bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto">
+                                <p className="text-gray-300 whitespace-pre-wrap">{candidateResponses || "Nenhuma resposta registrada."}</p>
+                            </div>
+                        </div>
+
+                        {/* Checklist */}
+                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                            <div className="flex items-center justify-between mb-6">
+                                <h3 className="text-xl font-bold text-white">CHECKLIST DE AVALIAÇÃO</h3>
+                                <div className="text-right">
+                                    <p className="text-3xl font-bold text-blue-400">{checklistScore.toFixed(1)}</p>
+                                    <p className="text-sm text-gray-400">/ {WOSC_CONFIG.checklist_total} pontos</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                {frozenChecklist.map((item, idx) => {
+                                    const result = checklistResults.find(r => r.id === item.id);
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className={`checklist-item bg-gray-900 rounded-lg p-4 border-2 ${
+                                                result?.resultado === true ? 'border-green-500' :
+                                                result?.resultado === false ? 'border-red-500' :
+                                                'border-gray-700'
+                                            }`}
+                                        >
+                                            <div className="flex items-start justify-between gap-4">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <span className="bg-gray-700 text-gray-300 px-2 py-1 rounded text-xs">
+                                                            Item {item.id}
+                                                        </span>
+                                                        <span className="bg-blue-500/20 text-blue-400 px-2 py-1 rounded text-xs">
+                                                            {item.peso} pts
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-gray-200">{item.descricao}</p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => onChecklistChange(item.id, true)}
+                                                        className={`px-4 py-2 rounded-lg font-semibold transition-all ${
+                                                            result?.resultado === true
+                                                                ? 'bg-green-600 text-white'
+                                                                : 'bg-gray-700 text-gray-400 hover:bg-green-600/50'
+                                                        }`}
+                                                    >
+                                                        CERTO
+                                                    </button>
+                                                    <button
+                                                        onClick={() => onChecklistChange(item.id, false)}
+                                                        className={`px-4 py-2 rounded-lg font-semibold transition-all ${
+                                                            result?.resultado === false
+                                                                ? 'bg-red-600 text-white'
+                                                                : 'bg-gray-700 text-gray-400 hover:bg-red-600/50'
+                                                        }`}
+                                                    >
+                                                        ERRADO
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Avaliação Global */}
+                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                            <div className="flex items-center justify-between mb-6">
+                                <h3 className="text-xl font-bold text-white">AVALIAÇÃO GLOBAL</h3>
+                                <div className="text-right">
+                                    <p className="text-3xl font-bold text-purple-400">
+                                        {globalEvaluation?.nota.toFixed(1) || "—"}
+                                    </p>
+                                    <p className="text-sm text-gray-400">/ {WOSC_CONFIG.global_total} pontos</p>
+                                </div>
+                            </div>
+
+                            <p className="text-gray-400 mb-4 text-sm">
+                                Avalie: Segurança, Linguagem técnica, Organização do raciocínio, Prioridade clínica
+                            </p>
+
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                {WOSC_CONFIG.niveis_global.map((nivel) => (
+                                    <button
+                                        key={nivel.rotulo}
+                                        onClick={() => onGlobalChange(nivel)}
+                                        className={`p-4 rounded-lg border-2 transition-all ${
+                                            globalEvaluation?.rotulo === nivel.rotulo
+                                                ? `${nivel.cor} border-white text-white`
+                                                : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-500'
+                                        }`}
+                                    >
+                                        <p className="font-bold">{nivel.rotulo}</p>
+                                        <p className="text-2xl">{nivel.nota}</p>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Notas do Avaliador */}
+                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                            <h3 className="text-lg font-bold text-white mb-4">Notas do Avaliador (opcional)</h3>
+                            <textarea
+                                value={evaluationNotes}
+                                onChange={(e) => onNotesChange(e.target.value)}
+                                placeholder="Observações adicionais..."
+                                className="w-full h-24 bg-gray-900 text-gray-100 rounded-lg p-4 border border-gray-600 outline-none resize-none"
+                            />
+                        </div>
+
+                        {/* Resumo e Finalizar */}
+                        <div className="bg-gradient-to-r from-blue-900 to-purple-900 rounded-xl p-6 border border-blue-500/50">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-xl font-bold text-white">NOTA FINAL CALCULADA</h3>
+                                    <p className="text-gray-300">Checklist ({checklistScore.toFixed(1)}) + Global ({globalEvaluation?.nota.toFixed(1) || 0})</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-5xl font-bold text-white">
+                                        {(checklistScore + (globalEvaluation?.nota || 0)).toFixed(1)}
+                                    </p>
+                                    <p className="text-gray-300">/ 10.0</p>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={onFinalize}
+                                disabled={!allEvaluated || !globalEvaluation}
+                                className={`w-full mt-6 py-4 rounded-xl font-bold text-lg transition-all ${
+                                    allEvaluated && globalEvaluation
+                                        ? 'bg-green-600 hover:bg-green-700 text-white'
+                                        : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                                }`}
+                            >
+                                {!allEvaluated ? 'Avalie todos os itens do checklist' :
+                                 !globalEvaluation ? 'Selecione a avaliação global' :
+                                 'FINALIZAR AVALIAÇÃO'}
+                            </button>
+                        </div>
+                    </div>
+                );
+            };
+
+            // Fase de Debriefing
+            const DebriefingPhase = ({ station, checklistResults, globalEvaluation, onClose }) => {
+                const checklistScore = checklistResults.reduce((t, i) => t + (i.resultado === true ? i.peso : 0), 0);
+                const finalScore = checklistScore + globalEvaluation.nota;
+
+                const acertos = checklistResults.filter(i => i.resultado === true);
+                const erros = checklistResults.filter(i => i.resultado === false);
+
+                return (
+                    <div className="animate-fade-in space-y-6">
+                        {/* Resultado Final */}
+                        <div className="bg-gradient-to-r from-gray-800 to-gray-900 rounded-xl p-8 border border-gray-700 text-center">
+                            <h2 className="text-3xl font-bold text-white mb-4">RESULTADO FINAL</h2>
+                            <div className="text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 mb-4">
+                                {finalScore.toFixed(1)}
+                            </div>
+                            <p className="text-gray-400">de 10.0 pontos</p>
+
+                            <div className="grid grid-cols-2 gap-4 mt-6 max-w-md mx-auto">
+                                <div className="bg-gray-800 rounded-lg p-4">
+                                    <p className="text-sm text-gray-400">Checklist</p>
+                                    <p className="text-2xl font-bold text-blue-400">{checklistScore.toFixed(1)}/7.0</p>
+                                </div>
+                                <div className="bg-gray-800 rounded-lg p-4">
+                                    <p className="text-sm text-gray-400">Global</p>
+                                    <p className="text-2xl font-bold text-purple-400">{globalEvaluation.nota.toFixed(1)}/3.0</p>
+                                    <p className="text-xs text-gray-500">{globalEvaluation.rotulo}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Diagnóstico e Padrão-Ouro */}
+                        <div className="bg-blue-900/30 rounded-xl p-6 border border-blue-500/30">
+                            <h3 className="text-xl font-bold text-blue-400 mb-4">DIAGNÓSTICO PRINCIPAL</h3>
+                            <p className="text-white text-lg">{station.diagnostico_principal}</p>
+                        </div>
+
+                        {/* Pontos do Debriefing */}
+                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                            <h3 className="text-xl font-bold text-white mb-4">PONTOS-CHAVE DO DEBRIEFING</h3>
+                            <ul className="space-y-3">
+                                {station.pontos_chave_debriefing.map((ponto, idx) => (
+                                    <li key={idx} className="flex items-start gap-3">
+                                        <span className="text-yellow-400">→</span>
+                                        <span className="text-gray-300">{ponto}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+
+                        {/* Acertos e Erros */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="bg-green-900/20 rounded-xl p-6 border border-green-500/30">
+                                <h3 className="text-lg font-bold text-green-400 mb-4">
+                                    ACERTOS ({acertos.length}/{checklistResults.length})
+                                </h3>
+                                {acertos.length > 0 ? (
+                                    <ul className="space-y-2">
+                                        {acertos.map(item => (
+                                            <li key={item.id} className="flex items-start gap-2">
+                                                <span className="text-green-400">✓</span>
+                                                <span className="text-green-200 text-sm">{item.descricao}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-gray-500">Nenhum item correto</p>
+                                )}
+                            </div>
+
+                            <div className="bg-red-900/20 rounded-xl p-6 border border-red-500/30">
+                                <h3 className="text-lg font-bold text-red-400 mb-4">
+                                    ERROS ({erros.length}/{checklistResults.length})
+                                </h3>
+                                {erros.length > 0 ? (
+                                    <ul className="space-y-2">
+                                        {erros.map(item => (
+                                            <li key={item.id} className="flex items-start gap-2">
+                                                <span className="text-red-400">✗</span>
+                                                <span className="text-red-200 text-sm">{item.descricao}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-gray-500">Nenhum erro!</p>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Bloco de Registro */}
+                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                            <h3 className="text-lg font-bold text-white mb-4">BLOCO DE REGISTRO</h3>
+                            <div className="bg-gray-900 rounded-lg p-4 font-mono text-sm text-gray-300">
+                                <p>Data: {new Date().toLocaleDateString('pt-BR')}</p>
+                                <p>Estação: {station.id}</p>
+                                <p>Área: {station.area}</p>
+                                <p>Nota Checklist: {checklistScore.toFixed(1)}/7.0</p>
+                                <p>Nota Global: {globalEvaluation.nota.toFixed(1)}/3.0 ({globalEvaluation.rotulo})</p>
+                                <p>Nota Final: {finalScore.toFixed(1)}/10.0</p>
+                                <p>Principal Erro: {erros[0]?.descricao || "Nenhum"}</p>
+                                <p>Principal Acerto: {acertos[0]?.descricao || "Nenhum"}</p>
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={onClose}
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl text-lg transition-colors"
+                        >
+                            VOLTAR AO MENU
+                        </button>
+                    </div>
+                );
+            };
+
+            // Histórico e Análise Longitudinal
+            const renderHistory = () => {
+                const statsByArea = getStatsByArea();
+                const recurringErrors = getRecurringErrors();
+
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 p-6">
+                        <div className="max-w-6xl mx-auto">
+                            <button
+                                onClick={() => setCurrentView('menu')}
+                                className="text-purple-400 hover:text-purple-300 mb-6 flex items-center gap-2"
+                            >
+                                ← Voltar ao Menu
+                            </button>
+
+                            <h2 className="text-3xl font-bold text-white mb-8">Análise Longitudinal</h2>
+
+                            {stationHistory.length === 0 ? (
+                                <div className="bg-gray-800 rounded-xl p-12 text-center border border-gray-700">
+                                    <p className="text-gray-400 text-xl">Nenhuma estação realizada ainda.</p>
+                                    <p className="text-gray-500 mt-2">Complete estações para ver sua análise de desempenho.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-8">
+                                    {/* Estatísticas Gerais */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                                            <p className="text-gray-400 text-sm">Total de Estações</p>
+                                            <p className="text-4xl font-bold text-white">{stationHistory.length}</p>
+                                        </div>
+                                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                                            <p className="text-gray-400 text-sm">Média Final</p>
+                                            <p className="text-4xl font-bold text-blue-400">
+                                                {(stationHistory.reduce((s, r) => s + r.nota_final, 0) / stationHistory.length).toFixed(1)}
+                                            </p>
+                                        </div>
+                                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                                            <p className="text-gray-400 text-sm">Média Checklist</p>
+                                            <p className="text-4xl font-bold text-green-400">
+                                                {(stationHistory.reduce((s, r) => s + r.nota_checklist, 0) / stationHistory.length).toFixed(1)}
+                                            </p>
+                                        </div>
+                                        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                                            <p className="text-gray-400 text-sm">Média Global</p>
+                                            <p className="text-4xl font-bold text-purple-400">
+                                                {(stationHistory.reduce((s, r) => s + r.nota_global, 0) / stationHistory.length).toFixed(1)}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Desempenho por Área */}
+                                    <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                                        <h3 className="text-xl font-bold text-white mb-4">Desempenho por Área</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            {statsByArea.map(({ area, media, total }) => (
+                                                <div key={area} className="bg-gray-900 rounded-lg p-4">
+                                                    <p className="text-gray-400 text-sm">{area}</p>
+                                                    <div className="flex items-end justify-between mt-2">
+                                                        <p className="text-3xl font-bold text-blue-400">{media}</p>
+                                                        <p className="text-gray-500 text-sm">{total} estações</p>
+                                                    </div>
+                                                    <div className="mt-2 bg-gray-700 rounded-full h-2">
+                                                        <div
+                                                            className="bg-blue-500 rounded-full h-2"
+                                                            style={{ width: `${(parseFloat(media) / 10) * 100}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Erros Recorrentes */}
+                                    {recurringErrors.length > 0 && (
+                                        <div className="bg-red-900/20 rounded-xl p-6 border border-red-500/30">
+                                            <h3 className="text-xl font-bold text-red-400 mb-4">Erros Recorrentes</h3>
+                                            <div className="space-y-3">
+                                                {recurringErrors.map(({ erro, count }, idx) => (
+                                                    <div key={idx} className="flex items-center justify-between bg-gray-900 rounded-lg p-3">
+                                                        <p className="text-gray-300 text-sm flex-1">{erro}</p>
+                                                        <span className="bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-sm">
+                                                            {count}x
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Histórico Detalhado */}
+                                    <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                                        <h3 className="text-xl font-bold text-white mb-4">Histórico de Estações</h3>
+                                        <div className="space-y-3">
+                                            {[...stationHistory].reverse().map((registro) => (
+                                                <div key={registro.id} className="bg-gray-900 rounded-lg p-4 flex items-center justify-between">
+                                                    <div>
+                                                        <div className="flex items-center gap-3">
+                                                            <span className="bg-blue-500/20 text-blue-400 px-2 py-1 rounded text-xs">
+                                                                {registro.area}
+                                                            </span>
+                                                            <span className="text-gray-400 text-sm">
+                                                                {new Date(registro.data).toLocaleDateString('pt-BR')}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-white mt-1">Estação {registro.id_estacao}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-2xl font-bold text-blue-400">{registro.nota_final.toFixed(1)}</p>
+                                                        <p className="text-xs text-gray-500">{registro.avaliacao_global}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Botão para limpar dados */}
+                                    <div className="text-center">
+                                        <button
+                                            onClick={() => {
+                                                if (window.confirm('Tem certeza que deseja apagar todo o histórico? Esta ação não pode ser desfeita.')) {
+                                                    setStationHistory([]);
+                                                    if (userProfile) {
+                                                        setUserProfile(prev => ({
+                                                            ...prev,
+                                                            estatisticas: {
+                                                                total_estacoes_realizadas: 0,
+                                                                media_nota_final: 0,
+                                                                media_nota_checklist: 0,
+                                                                media_nota_global: 0,
+                                                                tendencia: 'estavel'
+                                                            }
+                                                        }));
+                                                    }
+                                                }
+                                            }}
+                                            className="text-red-400 hover:text-red-300 text-sm"
+                                        >
+                                            Limpar Histórico
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            // ==========================================
+            // RENDERIZAÇÃO PRINCIPAL
+            // ==========================================
+            return (
+                <div className="min-h-screen">
+                    {currentView === 'menu' && renderMenu()}
+                    {currentView === 'stationSelect' && renderStationSelect()}
+                    {currentView === 'station' && renderStation()}
+                    {currentView === 'history' && renderHistory()}
+                </div>
+            );
+        }
+
+        // ==========================================
+        // INICIALIZAÇÃO
+        // ==========================================
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<WOSCApp />);
+    </script>
+</body>
+</html>
