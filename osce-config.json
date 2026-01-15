@@ -1,5 +1,5 @@
 {
-  "nome_do_sistema": "WOSC",
+  "nome_do_sistema": "OSCE",
   "versao": "1.0",
   "descricao": "Sistema de treino e avaliação OSCE com correção binária, checklist prévio e acompanhamento longitudinal de desempenho",
   "papel": "ORQUESTRADOR_META_OSCE_E_EXAMINADOR_CHEFE",
